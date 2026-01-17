@@ -35,5 +35,74 @@ services:
       GEN_INTERVAL_SECONDS: 10
       USER_WEIGHT_KG: 72
 
+  redash_redis:
+    image: redis:7-alpine
+    container_name: redash_redis
+    restart: unless-stopped
+
+  redash_db:
+    image: postgres:16-alpine
+    container_name: redash_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${REDASH_DB}
+      POSTGRES_USER: ${REDASH_DB_USER}
+      POSTGRES_PASSWORD: ${REDASH_DB_PASSWORD}
+    volumes:
+      - redash_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${REDASH_DB_USER} -d $${REDASH_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redash_init:
+    image: redash/redash:8.0.0.b32245
+    container_name: redash_init
+    depends_on:
+      redash_db:
+        condition: service_healthy
+      redash_redis:
+        condition: service_started
+    environment:
+      REDASH_DATABASE_URL: postgresql://${REDASH_DB_USER}:${REDASH_DB_PASSWORD}@redash_db:5432/${REDASH_DB}
+      REDASH_REDIS_URL: redis://redash_redis:6379/0
+      REDASH_COOKIE_SECRET: ${REDASH_COOKIE_SECRET}
+      REDASH_SECRET_KEY: ${REDASH_SECRET_KEY}
+    command: create_db
+    restart: "no"
+
+  redash_server:
+    image: redash/redash:8.0.0.b32245
+    container_name: redash_server
+    depends_on:
+      redash_init:
+        condition: service_completed_successfully
+    environment:
+      REDASH_DATABASE_URL: postgresql://${REDASH_DB_USER}:${REDASH_DB_PASSWORD}@redash_db:5432/${REDASH_DB}
+      REDASH_REDIS_URL: redis://redash_redis:6379/0
+      REDASH_COOKIE_SECRET: ${REDASH_COOKIE_SECRET}
+      REDASH_SECRET_KEY: ${REDASH_SECRET_KEY}
+    ports:
+      - "${REDASH_PORT}:5000"
+    restart: unless-stopped
+
+  redash_worker:
+    image: redash/redash:8.0.0.b32245
+    container_name: redash_worker
+    depends_on:
+      redash_init:
+        condition: service_completed_successfully
+    environment:
+      REDASH_DATABASE_URL: postgresql://${REDASH_DB_USER}:${REDASH_DB_PASSWORD}@redash_db:5432/${REDASH_DB}
+      REDASH_REDIS_URL: redis://redash_redis:6379/0
+      REDASH_COOKIE_SECRET: ${REDASH_COOKIE_SECRET}
+      REDASH_SECRET_KEY: ${REDASH_SECRET_KEY}
+      QUEUES: queries,scheduled_queries,celery
+      WORKERS_COUNT: 2
+    command: worker
+    restart: unless-stopped
+
 volumes:
   pg_data:
+  redash_pg_data:
